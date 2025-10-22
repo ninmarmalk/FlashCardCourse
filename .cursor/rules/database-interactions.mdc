@@ -1,0 +1,209 @@
+---
+alwaysApply: true
+---
+# Database Interaction Guidelines
+
+This project uses **Drizzle ORM** for all database interactions. All database operations must follow these guidelines.
+
+## Database Setup
+
+- **Database Client**: Neon Serverless PostgreSQL
+- **ORM**: Drizzle ORM with `drizzle-orm/neon-http`
+- **Schema Location**: [src/db/schema.ts](mdc:flashcard-app/src/db/schema.ts)
+- **Database Instance**: [src/db/index.ts](mdc:flashcard-app/src/db/index.ts)
+- **Configuration**: [drizzle.config.ts](mdc:flashcard-app/drizzle.config.ts)
+
+## Core Rules
+
+1. **Always import the database instance** from `@/db`:
+   ```typescript
+   import { db } from '@/db';
+   ```
+
+2. **Always import table schemas** from `@/db/schema`:
+   ```typescript
+   import { decksTable, cardsTable } from '@/db/schema';
+   ```
+
+3. **Use Drizzle query builders** - Never write raw SQL queries. Use Drizzle's type-safe query builders.
+
+## Common Query Patterns
+
+### Select Queries
+```typescript
+import { db } from '@/db';
+import { decksTable } from '@/db/schema';
+import { eq, and, desc } from 'drizzle-orm';
+
+// Select all
+const allDecks = await db.select().from(decksTable);
+
+// Select with conditions
+const userDecks = await db
+  .select()
+  .from(decksTable)
+  .where(eq(decksTable.userId, userId));
+
+// Select with multiple conditions
+const deck = await db
+  .select()
+  .from(decksTable)
+  .where(and(
+    eq(decksTable.id, deckId),
+    eq(decksTable.userId, userId)
+  ));
+
+// Select with ordering
+const sortedDecks = await db
+  .select()
+  .from(decksTable)
+  .orderBy(desc(decksTable.createdAt));
+```
+
+### Insert Queries
+```typescript
+// Insert single record
+const [newDeck] = await db
+  .insert(decksTable)
+  .values({
+    userId: userId,
+    title: "My Deck",
+    description: "A new flashcard deck"
+  })
+  .returning();
+
+// Insert multiple records
+const newCards = await db
+  .insert(cardsTable)
+  .values([
+    { deckId: 1, front: "Question 1", back: "Answer 1" },
+    { deckId: 1, front: "Question 2", back: "Answer 2" }
+  ])
+  .returning();
+```
+
+### Update Queries
+```typescript
+// Update with conditions
+const [updatedDeck] = await db
+  .update(decksTable)
+  .set({
+    title: "Updated Title",
+    updatedAt: new Date()
+  })
+  .where(and(
+    eq(decksTable.id, deckId),
+    eq(decksTable.userId, userId)
+  ))
+  .returning();
+```
+
+### Delete Queries
+```typescript
+// Delete with conditions
+await db
+  .delete(cardsTable)
+  .where(eq(cardsTable.id, cardId));
+
+// Cascade deletes are handled by the schema
+// Deleting a deck will automatically delete its cards
+await db
+  .delete(decksTable)
+  .where(eq(decksTable.id, deckId));
+```
+
+### Joins
+```typescript
+// Join tables
+const decksWithCards = await db
+  .select()
+  .from(decksTable)
+  .leftJoin(cardsTable, eq(decksTable.id, cardsTable.deckId))
+  .where(eq(decksTable.userId, userId));
+```
+
+## Schema Modifications
+
+When modifying the database schema:
+
+1. **Update** [src/db/schema.ts](mdc:flashcard-app/src/db/schema.ts)
+2. **Generate migration**: `npm run db:generate`
+3. **Apply migration**: `npm run db:migrate`
+4. **Never modify migration files** in the `drizzle/` directory manually
+
+## Important Operators
+
+Import these operators from `drizzle-orm` as needed:
+- `eq` - Equality comparison
+- `ne` - Not equal
+- `gt` - Greater than
+- `gte` - Greater than or equal
+- `lt` - Less than
+- `lte` - Less than or equal
+- `and` - Logical AND
+- `or` - Logical OR
+- `like` - Pattern matching
+- `inArray` - IN clause
+- `desc` - Descending order
+- `asc` - Ascending order
+
+## Best Practices
+
+1. **Always use `.returning()`** when you need the inserted/updated data back
+2. **Use transactions** for operations that need to be atomic
+3. **Validate user ownership** - Always check `userId` matches the authenticated user
+4. **Use prepared statements** for frequently executed queries
+5. **Handle errors properly** - Wrap database operations in try-catch blocks
+6. **Type safety** - Let TypeScript infer types from Drizzle queries
+
+## Example: Full CRUD Operation
+
+```typescript
+import { db } from '@/db';
+import { decksTable, cardsTable } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
+
+export async function createDeck(userId: string, title: string, description?: string) {
+  const [deck] = await db
+    .insert(decksTable)
+    .values({ userId, title, description })
+    .returning();
+  return deck;
+}
+
+export async function getDecksByUser(userId: string) {
+  return await db
+    .select()
+    .from(decksTable)
+    .where(eq(decksTable.userId, userId));
+}
+
+export async function updateDeck(deckId: number, userId: string, updates: { title?: string; description?: string }) {
+  const [deck] = await db
+    .update(decksTable)
+    .set({ ...updates, updatedAt: new Date() })
+    .where(and(
+      eq(decksTable.id, deckId),
+      eq(decksTable.userId, userId)
+    ))
+    .returning();
+  return deck;
+}
+
+export async function deleteDeck(deckId: number, userId: string) {
+  await db
+    .delete(decksTable)
+    .where(and(
+      eq(decksTable.id, deckId),
+      eq(decksTable.userId, userId)
+    ));
+}
+```
+
+## Forbidden Practices
+
+❌ **Never** write raw SQL queries
+❌ **Never** use string concatenation for queries
+❌ **Never** bypass the schema definitions
+❌ **Never** access the database without importing from `@/db`
+❌ **Never** forget to check user authorization before database operations

@@ -1,0 +1,56 @@
+---
+alwaysApply: true
+description: "shadcn UI usage guidelines for this project"
+---
+
+# shadcn UI Guidelines
+
+This project uses **shadcn UI** for all UI components and design elements.
+
+## Setup and Installation
+
+### Initial Setup
+If shadcn UI is not initialized in the project, use:
+```bash
+npx shadcn@latest init
+```
+
+### Adding Components
+When a specific component is needed but not yet installed, use the add command:
+```bash
+npx shadcn@latest add [component-name]
+```
+
+**Examples:**
+- Button component: `npx shadcn@latest add button`
+- Card component: `npx shadcn@latest add card`
+- Input component: `npx shadcn@latest add input`
+- Dialog component: `npx shadcn@latest add dialog`
+
+## Project Structure
+
+- Components are located in `src/components/ui/`
+- Utility functions are in `src/lib/utils.ts`
+- Configuration is in `components.json`
+- Design tokens are defined in `src/app/globals.css`
+
+## Usage Guidelines
+
+1. **Always use shadcn UI components** for any UI element instead of building custom components from scratch
+2. **Import components** from `@/components/ui/[component-name]`
+3. **Use the `cn()` utility** from `@/lib/utils` for conditional class merging
+4. **Follow shadcn UI patterns** for component variants and props
+5. **Leverage the design system** with CSS variables and tokens defined in globals.css
+
+## Available Components
+
+Currently installed components:
+- **Button** (`@/components/ui/button`) - Multiple variants: default, secondary, outline, destructive, ghost
+
+## Design System
+
+The project uses shadcn UI's design system with:
+- Light and dark mode support
+- Consistent spacing, typography, and color tokens
+- Accessible component patterns
+- TypeScript support throughout

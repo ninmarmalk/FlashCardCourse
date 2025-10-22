@@ -1,0 +1,299 @@
+---
+alwaysApply: true
+---
+# Clerk Authentication & Authorization Guidelines
+
+This project uses **Clerk** for all authentication and authorization. Security is critical - users must ONLY be able to access their own data.
+
+## Core Security Principle
+
+🔒 **NEVER** allow users to access data that doesn't belong to them. Always validate user ownership before any data operation.
+
+## Getting the Current User
+
+### In Server Components (App Router)
+```typescript
+import { auth } from '@clerk/nextjs/server';
+
+export default async function MyServerComponent() {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    // Handle unauthenticated user
+    redirect('/sign-in');
+  }
+  
+  // Use userId for data operations
+}
+```
+
+### In API Routes (Route Handlers)
+```typescript
+import { auth } from '@clerk/nextjs/server';
+
+export async function GET(request: Request) {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    return new Response('Unauthorized', { status: 401 });
+  }
+  
+  // Use userId for data operations
+}
+```
+
+### In Server Actions
+```typescript
+'use server';
+
+import { auth } from '@clerk/nextjs/server';
+
+export async function myServerAction() {
+  const { userId } = await auth();
+  
+  if (!userId) {
+    throw new Error('Unauthorized');
+  }
+  
+  // Use userId for data operations
+}
+```
+
+## Database Query Authorization
+
+### ✅ ALWAYS Include userId in Queries
+
+When querying the database, **ALWAYS** filter by `userId` to ensure users only access their own data:
+
+```typescript
+import { db } from '@/db';
+import { decksTable } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
+import { auth } from '@clerk/nextjs/server';
+
+// ✅ CORRECT - Filters by userId
+export async function getUserDecks() {
+  const { userId } = await auth();
+  if (!userId) throw new Error('Unauthorized');
+  
+  return await db
+    .select()
+    .from(decksTable)
+    .where(eq(decksTable.userId, userId));
+}
+
+// ✅ CORRECT - Validates ownership before update
+export async function updateDeck(deckId: number, title: string) {
+  const { userId } = await auth();
+  if (!userId) throw new Error('Unauthorized');
+  
+  const [deck] = await db
+    .update(decksTable)
+    .set({ title, updatedAt: new Date() })
+    .where(and(
+      eq(decksTable.id, deckId),
+      eq(decksTable.userId, userId) // Critical: Ensure user owns this deck
+    ))
+    .returning();
+    
+  if (!deck) {
+    throw new Error('Deck not found or unauthorized');
+  }
+  
+  return deck;
+}
+
+// ❌ WRONG - No userId filter (security vulnerability!)
+export async function getAllDecks() {
+  return await db.select().from(decksTable); // NEVER DO THIS
+}
+```
+
+### Nested Resource Authorization
+
+When accessing nested resources (e.g., cards in a deck), validate ownership at the parent level:
+
+```typescript
+import { db } from '@/db';
+import { decksTable, cardsTable } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
+import { auth } from '@clerk/nextjs/server';
+
+export async function getCardsForDeck(deckId: number) {
+  const { userId } = await auth();
+  if (!userId) throw new Error('Unauthorized');
+  
+  // Step 1: Verify user owns the deck
+  const deck = await db
+    .select()
+    .from(decksTable)
+    .where(and(
+      eq(decksTable.id, deckId),
+      eq(decksTable.userId, userId)
+    ))
+    .limit(1);
+    
+  if (!deck.length) {
+    throw new Error('Deck not found or unauthorized');
+  }
+  
+  // Step 2: Now safe to get cards for this deck
+  return await db
+    .select()
+    .from(cardsTable)
+    .where(eq(cardsTable.deckId, deckId));
+}
+```
+
+## Route Protection
+
+### Protecting Pages with Middleware
+
+The [middleware.ts](mdc:src/middleware.ts) file should use Clerk's middleware to protect routes:
+
+```typescript
+import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+
+const isPublicRoute = createRouteMatcher([
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  '/'
+]);
+
+export default clerkMiddleware(async (auth, request) => {
+  if (!isPublicRoute(request)) {
+    await auth.protect();
+  }
+});
+
+export const config = {
+  matcher: [
+    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
+    '/(api|trpc)(.*)',
+  ],
+};
+```
+
+## Common Patterns
+
+### Pattern 1: Authorization Helper Function
+```typescript
+import { auth } from '@clerk/nextjs/server';
+
+export async function requireAuth() {
+  const { userId } = await auth();
+  if (!userId) {
+    throw new Error('Unauthorized');
+  }
+  return userId;
+}
+
+// Usage
+export async function myFunction() {
+  const userId = await requireAuth();
+  // Proceed with userId
+}
+```
+
+### Pattern 2: Ownership Verification
+```typescript
+import { db } from '@/db';
+import { decksTable } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
+
+export async function verifyDeckOwnership(deckId: number, userId: string) {
+  const [deck] = await db
+    .select()
+    .from(decksTable)
+    .where(and(
+      eq(decksTable.id, deckId),
+      eq(decksTable.userId, userId)
+    ))
+    .limit(1);
+    
+  if (!deck) {
+    throw new Error('Deck not found or unauthorized');
+  }
+  
+  return deck;
+}
+```
+
+### Pattern 3: Safe Delete Operations
+```typescript
+import { db } from '@/db';
+import { decksTable } from '@/db/schema';
+import { eq, and } from 'drizzle-orm';
+import { auth } from '@clerk/nextjs/server';
+
+export async function deleteDeck(deckId: number) {
+  const { userId } = await auth();
+  if (!userId) throw new Error('Unauthorized');
+  
+  // This will only delete if the user owns the deck
+  const result = await db
+    .delete(decksTable)
+    .where(and(
+      eq(decksTable.id, deckId),
+      eq(decksTable.userId, userId)
+    ))
+    .returning();
+    
+  if (!result.length) {
+    throw new Error('Deck not found or unauthorized');
+  }
+}
+```
+
+## Security Checklist
+
+Before implementing any data operation, verify:
+
+- [ ] Is the user authenticated? (`userId` is present)
+- [ ] Does the query filter by `userId`?
+- [ ] For nested resources, is parent ownership verified?
+- [ ] Are error messages generic? (Don't leak existence of resources)
+- [ ] Is the route protected in middleware?
+- [ ] Does the mutation validate ownership before modifying?
+- [ ] Are all response paths secure?
+
+## Forbidden Practices
+
+❌ **Never** query data without filtering by userId
+❌ **Never** accept userId from client input (always get from `auth()`)
+❌ **Never** trust IDs from URL params without ownership verification
+❌ **Never** expose data existence in error messages (use generic errors)
+❌ **Never** skip authentication checks "for convenience"
+❌ **Never** use user data from cookies/headers directly (use Clerk's `auth()`)
+
+## Client Components
+
+For client components that need user information, use Clerk's client-side hooks:
+
+```typescript
+'use client';
+
+import { useUser } from '@clerk/nextjs';
+
+export function MyClientComponent() {
+  const { user, isLoaded, isSignedIn } = useUser();
+  
+  if (!isLoaded) return <div>Loading...</div>;
+  if (!isSignedIn) return <div>Please sign in</div>;
+  
+  return <div>Welcome, {user.firstName}!</div>;
+}
+```
+
+**Important:** Client-side authentication is for UI only. Always validate on the server!
+
+## Summary
+
+1. **Always** get userId from `auth()` on the server
+2. **Always** filter database queries by userId
+3. **Always** verify ownership before mutations
+4. **Always** protect routes with middleware
+5. **Never** trust client input for authentication
+6. **Never** skip authorization checks
+
+Security is not optional - it's a requirement for every data operation.
